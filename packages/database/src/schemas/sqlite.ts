@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { generateId } from '@colyseus/core';
 import type { TableEntry } from './registry.ts';
@@ -112,6 +112,14 @@ export const adminAuditColumns = {
   resource: text('resource').notNull(),
   targetId: text('target_id'),
   payload: text('payload', { mode: 'json' as const }),
+  /**
+   * Reduced, redaction-policy-tagged snapshot captured at record time
+   * (`{ label, fields: { name: value } }`). Survives deletion of the
+   * target row, so audit views keep showing "who/what this was about"
+   * without joining a table that may no longer exist. NULL on rows
+   * written before snapshots existed.
+   */
+  snapshot: text('snapshot', { mode: 'json' as const }),
   createdAt: integer('created_at', { mode: 'timestamp_ms' as const })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -163,7 +171,23 @@ export const colyseusRoles = sqliteTable('colyseus_roles', { ...roleColumns });
 
 export const colyseusUserNotes = sqliteTable('colyseus_user_notes', { ...userNoteColumns });
 
-export const colyseusAdminAudit = sqliteTable('colyseus_admin_audit', { ...adminAuditColumns });
+// (created_at DESC, id DESC) is the audit log's natural key: the query
+// API keyset-paginates with that tuple, and every filtered read (by
+// operator / resource / action / time window) orders the same way. The
+// three secondary indexes cover the equality filters most common in
+// incident reviews ("what did this operator do", "everything on this
+// resource", "every kick") while the leading/trailing created_at column
+// keeps the range + ordering cheap.
+export const colyseusAdminAudit = sqliteTable(
+  'colyseus_admin_audit',
+  { ...adminAuditColumns },
+  (table) => [
+    index('colyseus_admin_audit_created_at_id_index').on(table.createdAt, table.id),
+    index('colyseus_admin_audit_operator_created_index').on(table.operatorId, table.createdAt),
+    index('colyseus_admin_audit_resource_created_index').on(table.resource, table.createdAt),
+    index('colyseus_admin_audit_action_created_index').on(table.action, table.createdAt),
+  ],
+);
 
 /**
  * Matchmaking room cache — sqlite twin of pg's `roomCacheColumns`. See the

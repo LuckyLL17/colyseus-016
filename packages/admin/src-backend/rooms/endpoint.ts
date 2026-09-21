@@ -34,8 +34,30 @@ import { POSTGRES_MAX_INTEGER } from '@colyseus/database';
 import { errorResponse, json } from '../internal/http.js';
 import { ipFromHeaders } from '../auth/rate-limit.js';
 import { guard, type EndpointContext } from '../internal/context.js';
+import type { AuditSnapshot } from '@colyseus/database';
 
 const ROOMS_RESOURCE = 'rooms';
+
+/**
+ * Best-effort snapshot of a live room's identity (name + client count)
+ * so the audit entry still says which room it was after the room is
+ * disposed and its registry row is gone.
+ */
+async function roomSnapshot(roomId: string): Promise<AuditSnapshot | null> {
+  try {
+    const rooms = await matchMaker.query({ roomId });
+    const r = rooms[0] as any;
+    if (!r) { return null; }
+    const fields: Record<string, unknown> = {};
+    if (typeof r.name === 'string') { fields.name = r.name; }
+    if (typeof r.clients === 'number') { fields.clients = r.clients; }
+    if (typeof r.locked === 'boolean') { fields.locked = r.locked; }
+    if (typeof r.processId === 'string') { fields.processId = r.processId; }
+    return { label: typeof r.name === 'string' ? r.name : roomId, fields };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Database-backed matchmaking drivers cap an `Infinity` maxClients to
@@ -200,6 +222,7 @@ export function kickClientEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await roomSnapshot(roomId),
         });
         return json({ ok: true });
       } catch (err: any) {
@@ -240,6 +263,7 @@ export function lockRoomEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await roomSnapshot(roomId),
         });
         return json({ ok: true, locked: body.locked });
       } catch (err: any) {
@@ -299,6 +323,7 @@ export function editRoomStateEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await roomSnapshot(roomId),
         });
         return json({ ok: true });
       } catch (err: any) {
@@ -336,6 +361,7 @@ export function deleteRoomStateEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await roomSnapshot(roomId),
         });
         return json({ ok: true });
       } catch (err: any) {
@@ -365,6 +391,7 @@ export function disposeRoomEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await roomSnapshot(roomId),
         });
         return json({ ok: true });
       } catch (err: any) {

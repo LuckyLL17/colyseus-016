@@ -90,6 +90,11 @@ export type AdminAuditTableShape = Table & {
   resource: AnyColumn;
   targetId: AnyColumn;
   payload: AnyColumn;
+  /**
+   * Deletion-proof context captured at record time. Required on custom
+   * audit tables too — spread `adminAuditColumns` when extending.
+   */
+  snapshot: AnyColumn;
   createdAt: AnyColumn;
 };
 

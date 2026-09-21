@@ -1,4 +1,5 @@
 import type { Action, Role } from '@colyseus/database';
+import type { RedactRule } from '../audit/redactor.js';
 import type { AdminIconName } from '../display/icons.js';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -161,6 +162,36 @@ export interface ResourceDefinition {
    *  - `"deny"`            → blocked entirely
    */
   policies?: Partial<Record<Action, PolicyEntry>>;
+  /**
+   * Audit-surface configuration for this resource:
+   *
+   *   - `redactFields` adds permission-driven rules applied to this
+   *     resource's values wherever they appear in audit rows (payload
+   *     before/after diffs, row copies, and snapshots). The built-in
+   *     credential denylist (password/token/secret…) and default PII
+   *     rules always apply on top — custom rules can only tighten.
+   *
+   * @example
+   *   audit: {
+   *     redactFields: [
+   *       { field: 'credit_card', mode: 'mask', minRole: 'admin' },
+   *     ],
+   *   }
+   */
+  audit?: {
+    redactFields?: Array<{
+      field: string;
+      mode?: 'redact' | 'mask';
+      minRole?: Role;
+    }>;
+  };
+  /**
+   * Keep the resource reachable via its REST endpoints and relations
+   * but omit it from the catalog response that drives the sidebar /
+   * generic CRUD pages. Used by `adminAudit`, which gets a dedicated
+   * audit page instead of the generic list.
+   */
+  hideFromCatalog?: boolean;
 }
 
 const tableNameSymbol = Symbol.for('drizzle:Name');

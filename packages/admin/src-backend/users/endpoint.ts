@@ -26,7 +26,9 @@ import {
 import { listUserSessionsLive } from '@colyseus/core/internal';
 import { errorResponse, json } from '../internal/http.js';
 import { ipFromHeaders } from '../auth/rate-limit.js';
-import { guard, type EndpointContext } from '../internal/context.js';
+import { guard, tableOrError, type EndpointContext } from '../internal/context.js';
+import { sqlKeyedProjection } from '../internal/helpers.js';
+import { buildSnapshot } from '../audit/snapshot.js';
 
 const USERS_RESOURCE = 'users';
 
@@ -43,6 +45,27 @@ async function tryRecord(
     await ctx.database.audit.record(entry);
   } catch (err) {
     ctx.logger?.warn?.({ err }, '[admin] audit insert failed');
+  }
+}
+
+/**
+ * Fetch the current users-row for snapshot purposes. Best-effort: a
+ * missing table/row returns null rather than failing the action — the
+ * audit row still records operator, action and target id.
+ */
+async function userSnapshot(ctx: EndpointContext, userId: string) {
+  try {
+    const r = tableOrError(ctx, USERS_RESOURCE);
+    if (r instanceof Response) { return null; }
+    const rows = await ctx.database.drizzle
+      .select(sqlKeyedProjection(r.cfg))
+      .from(r.table)
+      // `id` is the canonical identity on every supported users table.
+      .where((r.table as any).id.eq(userId))
+      .limit(1) as any[];
+    return buildSnapshot(rows[0] ?? null, r.cfg);
+  } catch {
+    return null;
   }
 }
 
@@ -144,6 +167,7 @@ export function banUserEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await userSnapshot(ctx, userId),
         });
         return json({ ok: true, sessionsClosed });
       } catch (err: any) {
@@ -176,6 +200,7 @@ export function unbanUserEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await userSnapshot(ctx, userId),
         });
         return json({ ok: true });
       } catch (err: any) {
@@ -214,6 +239,7 @@ export function revokeSessionsEndpoint(ctx: EndpointContext): Endpoint {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
           },
+          snapshot: await userSnapshot(ctx, userId),
         });
         return json({ ok: true, sessionsClosed });
       } catch (err: any) {

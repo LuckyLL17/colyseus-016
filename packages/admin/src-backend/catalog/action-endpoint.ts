@@ -8,6 +8,7 @@ import { createEndpoint, type Endpoint } from '@colyseus/core';
 import { sqlKeyedProjection, tryAudit } from '../internal/helpers.js';
 import { errorResponse, json } from '../internal/http.js';
 import { pkOrError, tableOrError, type EndpointContext } from '../internal/context.js';
+import { buildSnapshot } from '../audit/snapshot.js';
 
 export function actionEndpoint(ctx: EndpointContext): Endpoint {
   return createEndpoint(
@@ -31,6 +32,7 @@ export function actionEndpoint(ctx: EndpointContext): Endpoint {
       }
 
       let row: any = null;
+      let rowCfg: any = null;
       const body = (reqCtx.body ?? {}) as { id?: string };
       if (found.perRow) {
         if (!body.id) { return errorResponse(400, `action '${actionName}' requires an id`); }
@@ -45,6 +47,7 @@ export function actionEndpoint(ctx: EndpointContext): Endpoint {
           .limit(1);
         if (!rows[0]) { return errorResponse(404, 'row not found'); }
         row = rows[0];
+        rowCfg = r.cfg;
       }
 
       const result = await found.handler(row, { userId: userId ?? '', resource });
@@ -54,6 +57,7 @@ export function actionEndpoint(ctx: EndpointContext): Endpoint {
         resource,
         targetId: body.id ?? null,
         payload: { name: actionName, args: body, result: result ?? null },
+        snapshot: buildSnapshot(row, rowCfg),
       }));
       return json({ ok: true, result: result ?? null });
     },

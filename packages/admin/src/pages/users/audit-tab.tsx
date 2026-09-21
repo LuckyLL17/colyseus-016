@@ -32,6 +32,10 @@ interface AuditEntry {
   resource: string;
   target_id: string | null;
   payload: any;
+  snapshot?: {
+    label?: string | null;
+    fields?: Record<string, unknown>;
+  } | null;
   created_at: string | number | Date;
 }
 
@@ -189,9 +193,19 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           className="border-t px-3 py-2"
           data-testid={`audit-row-payload-${entry.id}`}
         >
-          {/* Same JsonViewer the standalone /admin/adminAudit show
-              page uses — keeps font + colors + theme consistent
-              across both surfaces. */}
+          {/* Deletion-proof context captured at record time — keeps
+              identifying info (label + a few scalar fields) visible
+              even when the target row no longer exists. */}
+          {entry.snapshot?.fields && Object.keys(entry.snapshot.fields).length > 0 && (
+            <div className="mb-2">
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                Captured context
+              </div>
+              <JsonViewer data={entry.snapshot} />
+            </div>
+          )}
+          {/* Same JsonViewer the standalone /audit page uses — keeps
+              font + colors + theme consistent across both surfaces. */}
           <JsonViewer data={payload} />
         </div>
       )}

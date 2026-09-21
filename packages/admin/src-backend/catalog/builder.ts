@@ -46,9 +46,14 @@ export function buildResourceCatalog(input: BuildCatalogInput): CatalogResource[
     });
   }
 
-  return Object.entries(tables).map(([name, t]) => {
+  return Object.entries(tables).flatMap(([name, t]) => {
     const cfg = meta.get(name)!.cfg;
     const def = resources[name];
+
+    // Hidden resources (adminAudit has a dedicated audit page) stay in
+    // `ctx.resources` for RBAC + endpoints but never reach the catalog
+    // that drives the sidebar and generic CRUD pages.
+    if (def?.hideFromCatalog) { return []; }
     const compositePk = (cfg.primaryKeys ?? []).flatMap((pk) =>
       pk.columns.map((c) => c.name));
     const singlePk = cfg.columns.filter((c) => c.primary).map((c) => c.name);
@@ -103,7 +108,7 @@ export function buildResourceCatalog(input: BuildCatalogInput): CatalogResource[
           fk: fkSql,
         };
       });
-    return {
+    return [{
       name,
       label: def?.label ?? humanize(name),
       icon: def?.icon ?? iconForTableName(cfg.name),
@@ -148,10 +153,9 @@ export function buildResourceCatalog(input: BuildCatalogInput): CatalogResource[
         confirm: a.confirm,
       })),
       relations: sourceRelations,
-    };
+    }];
   });
 }
-
 /**
  * Pick a column from `columns` to display when linking to a row of this table.
  * Mirrors the frontend's heuristic so FK cells show a meaningful label

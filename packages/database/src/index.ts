@@ -17,8 +17,23 @@ export type { ConfigsRegistry, ConfigValue, AllConfigs } from './configs.ts';
 export { VersionConflictError } from './services/CloudSaveService.ts';
 export type { LeaderboardEntry } from './services/LeaderboardsService.ts';
 export type { Role, Action } from './services/ModerationService.ts';
-export { diffRows } from './services/AuditService.ts';
-export type { AuditEntry, AuditAction } from './services/AuditService.ts';
+export {
+  diffRows,
+  encodeAuditCursor,
+  decodeAuditCursor,
+  AUDIT_DEFAULT_BATCH,
+  AUDIT_EXPORT_BATCH,
+  AUDIT_MAX_LIMIT,
+  AUDIT_MAX_WINDOW_MS,
+} from './services/AuditService.ts';
+export type {
+  AuditEntry,
+  AuditAction,
+  AuditSnapshot,
+  AuditQuery,
+  AuditCursor,
+  AuditPage,
+} from './services/AuditService.ts';
 export { defineSegment, createSegmentDefiner } from './segments.ts';
 export type { RelationDefinition, RelationKind } from './relations-meta.ts';
 export { resolveFkLayout } from './relations-meta.ts';

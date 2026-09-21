@@ -40,6 +40,7 @@ import {
 import {
   banUserEndpoint, unbanUserEndpoint, revokeSessionsEndpoint,
 } from './users/endpoint.js';
+import { auditQueryEndpoint, auditExportEndpoint } from './audit/endpoint.js';
 // Side-effect import: monkey-patches `Room.prototype` with the
 // `_editStateProperty` / `_deleteStateProperty` hooks the inspector's
 // state-editor calls via `matchMaker.remoteRoomCall`. Must run before
@@ -54,6 +55,7 @@ import {
 
 export { defineAdminResource } from './catalog/define-resource.js';
 export type { ResourceDefinition, ResourceAction, PolicyEntry } from './catalog/define-resource.js';
+export type { RedactRule, RedactMode } from './audit/redactor.js';
 export type { SessionConfig, AdminSession } from './auth/sessions.js';
 export type { AdminGuardOptions } from './auth/guard.js';
 export {
@@ -301,6 +303,11 @@ function applyBuiltInResourceDefaults(
     adminAudit: () => ({
       label: 'Audit log',
       icon: 'file-text',
+      // The generic CRUD list/show still serve the data (incl. the
+      // user-show Audit tab), but the catalog stays clear of a generic
+      // entry — the dedicated /audit page owns filtering, keyset
+      // paging, snapshots and exports.
+      hideFromCatalog: true,
       policies: {
         list:   ['admin'],
         read:   ['admin'],
@@ -313,13 +320,11 @@ function applyBuiltInResourceDefaults(
         // list-table's column header order — the projection limits
         // the API response to these columns, and the user-show
         // Audit tab needs `payload` to render reason / until / diff.
-        // The standalone /adminAudit list page renders it as a
-        // truncated JSON cell via `formatCell`.
-        columns: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload'],
+        columns: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload', 'snapshot'],
         defaultSort: { field: 'created_at', order: 'desc' },
       },
       show: {
-        fields: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload'],
+        fields: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload', 'snapshot'],
       },
       columns: {
         created_at:  { label: 'When' },
@@ -523,6 +528,12 @@ function adminImpl(opts: AdminOptions) {
     adminUserBan:            banUserEndpoint(ctx),
     adminUserUnban:          unbanUserEndpoint(ctx),
     adminUserRevokeSessions: revokeSessionsEndpoint(ctx),
+
+    // Audit query API + streaming export. Dedicated surface (filters,
+    // keyset pagination, permission-driven redaction, fixed-boundary
+    // batches) rather than generic CRUD over adminAudit.
+    adminAuditQuery:  auditQueryEndpoint(ctx),
+    adminAuditExport: auditExportEndpoint(ctx),
 
     adminList:        listEndpoint(ctx),
     adminGet:         getEndpoint(ctx),

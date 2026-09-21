@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, jsonb, serial, timestamp, varchar, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, jsonb, serial, timestamp, varchar, primaryKey, index } from 'drizzle-orm/pg-core';
 import { generateId } from '@colyseus/core';
 import type { TableEntry } from './registry.ts';
 
@@ -98,6 +98,9 @@ export const adminAuditColumns = {
   resource: text('resource').notNull(),
   targetId: text('target_id'),
   payload: jsonb('payload'),
+  // Reduced, deletion-proof context captured at record time. See the
+  // twin column in schemas/sqlite.ts for the contract.
+  snapshot: jsonb('snapshot'),
   createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
 };
 
@@ -141,7 +144,19 @@ export const colyseusRoles = pgTable('colyseus_roles', { ...roleColumns });
 
 export const colyseusUserNotes = pgTable('colyseus_user_notes', { ...userNoteColumns });
 
-export const colyseusAdminAudit = pgTable('colyseus_admin_audit', { ...adminAuditColumns });
+export const colyseusAdminAudit = pgTable(
+  'colyseus_admin_audit',
+  { ...adminAuditColumns },
+  (table) => [
+    // Mirrors the sqlite index set — (created_at, id) backs keyset
+    // pagination; the other three back equality filters on the audit
+    // query/export endpoints.
+    index('colyseus_admin_audit_created_at_id_index').on(table.createdAt, table.id),
+    index('colyseus_admin_audit_operator_created_index').on(table.operatorId, table.createdAt),
+    index('colyseus_admin_audit_resource_created_index').on(table.resource, table.createdAt),
+    index('colyseus_admin_audit_action_created_index').on(table.action, table.createdAt),
+  ],
+);
 
 /**
  * Matchmaking room cache. Used by the `@colyseus/database/driver`

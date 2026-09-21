@@ -4,7 +4,8 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, beforeEach, afterEach } from 'node:test';
-import { GameDatabase, VersionConflictError } from '../src/index.ts';
+import { GameDatabase, VersionConflictError, decodeAuditCursor } from '../src/index.ts';
+import type { AuditCursor } from '../src/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -464,6 +465,82 @@ for (const backend of BACKENDS) {
         const remaining = await db.audit.list();
         assert.equal(remaining.length, 1);
         assert.equal(remaining[0]!.action, 'update');
+      });
+
+      it('query() filters by action list, target id and time window', async () => {
+        await db.audit.record({ action: 'user.ban', resource: 'users', targetId: 'u1' });
+        await db.audit.record({ action: 'user.unban', resource: 'users', targetId: 'u1' });
+        await db.audit.record({ action: 'delete', resource: 'configs', targetId: 'c1' });
+
+        const page = await db.audit.query({
+          resource: 'users',
+          action: ['user.ban', 'user.unban'],
+          targetId: 'u1',
+        });
+        assert.equal(page.entries.length, 2);
+        assert.ok(page.entries.every((e) => e.targetId === 'u1'));
+        assert.equal(page.nextCursor, null);
+
+        const windowStart = new Date(Date.now() + 60_000);
+        const futureOnly = await db.audit.query({
+          createdAfter: windowStart,
+        });
+        assert.equal(futureOnly.entries.length, 0);
+        assert.equal(futureOnly.nextCursor, null);
+      });
+
+      it('query() keyset pagination walks all rows without duplicates', async () => {
+        // 15 rows with no delays — equal-timestamp tie-breaking by id
+        // is exactly what the (created_at, id) cursor must handle.
+        for (let i = 0; i < 15; i++) {
+          await db.audit.record({ action: 'create', resource: 'bulk' });
+        }
+
+        const seen = new Set<string>();
+        let cursor: AuditCursor | null = null;
+        let pages = 0;
+        for (;;) {
+          const page = await db.audit.query({ resource: 'bulk', cursor, limit: 4 });
+          pages++;
+          for (const e of page.entries) {
+            assert.ok(!seen.has(e.id), `duplicate row ${e.id} across pages`);
+            seen.add(e.id);
+          }
+          if (!page.nextCursor) { break; }
+          cursor = decodeAuditCursor(page.nextCursor);
+          assert.ok(cursor, 'returned cursor must decode');
+        }
+        assert.equal(seen.size, 15);
+        // ceil(15/4) = 4 pages
+        assert.equal(pages, 4);
+      });
+
+      it('iterate() yields every row in fixed batches', async () => {
+        for (let i = 0; i < 10; i++) {
+          await db.audit.record({ action: 'update', resource: 'stream' });
+        }
+        const got = [];
+        let batchCount = 0;
+        for await (const batch of db.audit.iterate({ resource: 'stream' }, { batchSize: 3 })) {
+          assert.ok(batch.length <= 3);
+          batchCount++;
+          got.push(...batch);
+        }
+        assert.equal(got.length, 10);
+        assert.equal(batchCount, 4); // 3,3,3,1
+      });
+
+      it('stores and returns snapshots so deleted targets keep context', async () => {
+        await db.audit.record({
+          action: 'delete', resource: 'users', targetId: 'u-gone',
+          payload: { row: { id: 'u-gone' } },
+          snapshot: { label: 'jane@example.com', fields: { email: 'jane@example.com' } },
+        });
+        const [entry] = await db.audit.list({ resource: 'users' });
+        assert.deepStrictEqual(entry!.snapshot, {
+          label: 'jane@example.com',
+          fields: { email: 'jane@example.com' },
+        });
       });
     });
 

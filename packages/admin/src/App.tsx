@@ -10,6 +10,7 @@ import type { Resource } from './types';
 import { ListPage, ShowPage, EditPage, CreatePage } from './pages';
 import { RoomsListPage } from './pages/rooms/list';
 import { RoomShowPage } from './pages/rooms/show';
+import { AuditPage } from './pages/audit';
 import { Dashboard } from './Dashboard';
 import { iconFor } from './icons';
 import { authProvider } from './authProvider';
@@ -20,7 +21,7 @@ import { SignInGate } from './SignInGate';
 import { UserHeader } from './UserHeader';
 import { ThemeToggle } from './ThemeToggle';
 import { ThemeProvider } from '@/lib/theme-provider';
-import { LayoutDashboard, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Menu, X, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { API, BASENAME } from '@/lib/runtime-config';
@@ -102,6 +103,10 @@ export function App() {
                 directly. */}
             <Route path="rooms" element={<RoomsListPage />} />
             <Route path="rooms/:roomId" element={<RoomShowPage />} />
+            {/* Dedicated audit surface (cursor paging + streaming
+                export). Not a Refine resource — it talks to
+                /admin-api/audit/*. */}
+            <Route path="audit" element={<AuditPage />} />
             {/* `<KeyedRoute>` forces a fresh ListPage instance per
                 `:resource` so React Query's "keep previous data"
                 behavior (which is the right call inside a single
@@ -273,6 +278,13 @@ function SidebarNav({ resources, pathname }: { resources: Resource[]; pathname: 
         active={pathname === '/rooms' || pathname.startsWith('/rooms/')}
       >
         Live rooms
+      </SidebarLink>
+      <SidebarLink
+        to="/audit"
+        icon={<FileText className="size-4" />}
+        active={pathname === '/audit'}
+      >
+        Audit log
       </SidebarLink>
       <div className="px-3 pt-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
         Resources

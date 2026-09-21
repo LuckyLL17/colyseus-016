@@ -16,6 +16,7 @@
  */
 import { createEndpoint, type Endpoint } from '@colyseus/core';
 import { and, asc, desc, like, or, sql, type SQL } from 'drizzle-orm';
+import type { Role } from '@colyseus/database';
 import {
   buildFilterCondition,
   listColumns,
@@ -26,6 +27,40 @@ import {
 } from '../internal/helpers.js';
 import { errorResponse, json } from '../internal/http.js';
 import { guard, pkOrError, tableOrError, type EndpointContext } from '../internal/context.js';
+import { buildSnapshot } from '../audit/snapshot.js';
+import { redactAuditRow, resolveRedactRules, type RedactRule } from '../audit/redactor.js';
+
+const AUDIT_RESOURCE = 'adminAudit';
+
+/**
+ * Redaction rules for audit rows served via the GENERIC CRUD path
+ * (the user-show Audit tab reads adminAudit through the standard list
+ * endpoint). Rules are built once per request — cheap, and keeps the
+ * deployment-specific `audit.redactFields` extensions in play.
+ */
+function auditRedactionRules(ctx: EndpointContext): RedactRule[] {
+  const custom: RedactRule[] = [];
+  for (const [resourceName, def] of Object.entries(ctx.resources)) {
+    for (const rule of def.audit?.redactFields ?? []) {
+      custom.push({ resource: resourceName, ...rule });
+    }
+  }
+  return resolveRedactRules(custom);
+}
+
+/**
+ * Apply the viewer's redaction policy to adminAudit rows on the generic
+ * read paths. Resolves the viewer role from the session the same way
+ * guard() does.
+ */
+async function redactAuditRows(ctx: EndpointContext, reqCtx: any, rows: any[]): Promise<any[]> {
+  const userId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
+  const role: Role = userId
+    ? await ctx.database.moderation.getRole(userId)
+    : 'user';
+  const rules = auditRedactionRules(ctx);
+  return rows.map((row) => redactAuditRow(row, role, rules));
+}
 
 const RESERVED_QUERY_KEYS = new Set(['_start', '_end', '_sort', '_order', '_q']);
 
@@ -121,7 +156,13 @@ export function listEndpoint(ctx: EndpointContext): Endpoint {
       if (col) { query = query.orderBy(effectiveSort.order === 'desc' ? desc(col as any) : asc(col as any)); }
     }
 
-    const rows = await query;
+    const rows0 = await query;
+    // Audit rows carry before/after payloads + snapshots — redact for
+    // the viewer's role even on the generic list path (user-show Audit
+    // tab reads them here).
+    const rows = resource === AUDIT_RESOURCE
+      ? await redactAuditRows(ctx, reqCtx, rows0)
+      : rows0;
     let countQuery = ctx.database.drizzle.select({ c: sql<number>`count(*)` }).from(table) as any;
     if (whereClause) { countQuery = countQuery.where(whereClause); }
     const totalRows = await countQuery;
@@ -154,6 +195,10 @@ export function getEndpoint(ctx: EndpointContext): Endpoint {
       .where(built.where)
       .limit(1);
     if (!rows[0]) { return errorResponse(404, 'not found'); }
+    if (resource === AUDIT_RESOURCE) {
+      const [redacted] = await redactAuditRows(ctx, reqCtx, rows);
+      return json(redacted);
+    }
     return json(rows[0]);
   });
 }
@@ -195,6 +240,7 @@ export function createEndpoint_(ctx: EndpointContext): Endpoint {
       .returning(sqlKeyedProjection(r.cfg));
 
     // Audit: capture the created row + the operator behind the creation.
+    // Snapshot preserves label/context after the row is later deleted.
     const targetId = (() => {
       const pkCols = pkColumns(r.cfg);
       if (pkCols.length === 1) { return String(row[pkCols[0]!.name]); }
@@ -202,6 +248,7 @@ export function createEndpoint_(ctx: EndpointContext): Endpoint {
     })();
     await tryAudit(ctx.logger, () => ctx.database.audit.record({
       operatorId, action: 'create', resource, targetId, payload: { row },
+      snapshot: buildSnapshot(row as any, r.cfg),
     }));
     return json(row, { status: 201 });
   });
@@ -238,6 +285,9 @@ export function updateEndpoint(ctx: EndpointContext, method: 'PUT' | 'PATCH'): E
     await tryAudit(ctx.logger, () => ctx.database.audit.recordUpdate({
       operatorId, resource, targetId: id,
       before: beforeRows[0] as any, after: row,
+      // After-state snapshot — that's the row's current identity if
+      // it's deleted later.
+      snapshot: buildSnapshot(row as any, cfg),
     }));
     return json(row);
   });
@@ -263,6 +313,9 @@ export function deleteEndpoint(ctx: EndpointContext): Endpoint {
     const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
     await tryAudit(ctx.logger, () => ctx.database.audit.record({
       operatorId, action: 'delete', resource, targetId: id, payload: { row },
+      // This is the key snapshot case: the row is already gone, so the
+      // snapshot is now the only joined-free context the log has.
+      snapshot: buildSnapshot(row as any, cfg),
     }));
     return json(row);
   });
