@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { generateId } from '@colyseus/core';
 import type { TableEntry } from './registry.ts';
@@ -104,13 +104,27 @@ export const roleColumns = {
  *   update → { before, after }
  *   delete → { row }
  *   custom → { name, args, result }
+ *
+ * `operatorLabel` / `resourceLabel` / `targetLabel` are denormalized
+ * display snapshots captured at WRITE time. The log must stay legible
+ * after the referenced rows disappear (purged user, deleted config),
+ * so the human context ("alice@example.com", "Configs", "double_xp")
+ * is copied onto the record rather than JOIN-resolved at read time.
+ * The id columns remain the source of truth; labels are best-effort
+ * and null on legacy rows or for synthetic resources (rooms, auth).
  */
 export const adminAuditColumns = {
   id: text('id').primaryKey().$defaultFn(() => generateId(21)),
   operatorId: text('operator_id'),
+  // Denormalized display snapshots — see design note above. Captured
+  // at write time so the log stays legible after the referenced
+  // operator/resource/row is deleted.
+  operatorLabel: text('operator_label'),
   action: text('action').notNull(),
   resource: text('resource').notNull(),
+  resourceLabel: text('resource_label'),
   targetId: text('target_id'),
+  targetLabel: text('target_label'),
   payload: text('payload', { mode: 'json' as const }),
   createdAt: integer('created_at', { mode: 'timestamp_ms' as const })
     .notNull()
@@ -163,7 +177,18 @@ export const colyseusRoles = sqliteTable('colyseus_roles', { ...roleColumns });
 
 export const colyseusUserNotes = sqliteTable('colyseus_user_notes', { ...userNoteColumns });
 
-export const colyseusAdminAudit = sqliteTable('colyseus_admin_audit', { ...adminAuditColumns });
+export const colyseusAdminAudit = sqliteTable('colyseus_admin_audit', { ...adminAuditColumns }, (table) => [
+  // Audit queries are always newest-first with optional equality
+  // filters on operator/resource/action. The (col, created_at) pairs
+  // make those index scans covering; the trailing id in the PK-ish
+  // ordering stabilizes ties. Created with IF NOT EXISTS on every
+  // boot, so existing databases pick them up automatically.
+  index('idx_admin_audit_created_at').on(table.createdAt),
+  index('idx_admin_audit_operator_created').on(table.operatorId, table.createdAt),
+  index('idx_admin_audit_resource_created').on(table.resource, table.createdAt),
+  index('idx_admin_audit_target_created').on(table.targetId, table.createdAt),
+  index('idx_admin_audit_action_created').on(table.action, table.createdAt),
+]);
 
 /**
  * Matchmaking room cache — sqlite twin of pg's `roomCacheColumns`. See the

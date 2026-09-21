@@ -27,24 +27,9 @@ import { listUserSessionsLive } from '@colyseus/core/internal';
 import { errorResponse, json } from '../internal/http.js';
 import { ipFromHeaders } from '../auth/rate-limit.js';
 import { guard, type EndpointContext } from '../internal/context.js';
+import { recordAudit } from '../audit/record.js';
 
 const USERS_RESOURCE = 'users';
-
-/**
- * Audit-log helper — mirrors the inline `tryRecord` in rooms.ts.
- * Records failures via the logger but swallows them so a slow audit
- * insert can't drop the operator's response.
- */
-async function tryRecord(
-  ctx: EndpointContext,
-  entry: Parameters<EndpointContext['database']['audit']['record']>[0],
-): Promise<void> {
-  try {
-    await ctx.database.audit.record(entry);
-  } catch (err) {
-    ctx.logger?.warn?.({ err }, '[admin] audit insert failed');
-  }
-}
 
 /**
  * Force-close every active WebSocket session a user has across the
@@ -135,7 +120,7 @@ export function banUserEndpoint(ctx: EndpointContext): Endpoint {
         // client's close frame so games can react meaningfully.
         const sessionsClosed = await closeUserSessions(ctx, userId, 'banned');
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
+        await recordAudit(ctx, {
           operatorId, action: 'user.ban', resource: USERS_RESOURCE, targetId: userId,
           payload: {
             reason: reason ?? null,
@@ -170,7 +155,7 @@ export function unbanUserEndpoint(ctx: EndpointContext): Endpoint {
       try {
         await ctx.database.auth.unban(userId);
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
+        await recordAudit(ctx, {
           operatorId, action: 'user.unban', resource: USERS_RESOURCE, targetId: userId,
           payload: {
             ip: ipFromHeaders(reqCtx.getHeader),
@@ -206,7 +191,7 @@ export function revokeSessionsEndpoint(ctx: EndpointContext): Endpoint {
         // close frame so the app can show an appropriate message.
         const sessionsClosed = await closeUserSessions(ctx, userId, 'revoked');
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
+        await recordAudit(ctx, {
           operatorId, action: 'user.revoke_sessions', resource: USERS_RESOURCE, targetId: userId,
           payload: {
             tokenVersion,

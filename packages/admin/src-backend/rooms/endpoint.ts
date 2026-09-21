@@ -34,6 +34,7 @@ import { POSTGRES_MAX_INTEGER } from '@colyseus/database';
 import { errorResponse, json } from '../internal/http.js';
 import { ipFromHeaders } from '../auth/rate-limit.js';
 import { guard, type EndpointContext } from '../internal/context.js';
+import { recordAudit } from '../audit/record.js';
 
 const ROOMS_RESOURCE = 'rooms';
 
@@ -192,8 +193,11 @@ export function kickClientEndpoint(ctx: EndpointContext): Endpoint {
         );
         // Audit before returning so a slow leave hook can't drop the operator.
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
+        await recordAudit(ctx, {
           operatorId, action: 'room.kick', resource: ROOMS_RESOURCE, targetId: roomId,
+          // Synthetic resource: no table to join; the room id is its
+          // own (only) durable identifier after disposal.
+          targetLabel: roomId,
           payload: {
             sessionId,
             reason: reason ?? null,
@@ -232,10 +236,10 @@ export function lockRoomEndpoint(ctx: EndpointContext): Endpoint {
           roomId, (body.locked ? 'lock' : 'unlock') as keyof Room,
         );
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
+        await recordAudit(ctx, {
           operatorId,
           action: body.locked ? 'room.lock' : 'room.unlock',
-          resource: ROOMS_RESOURCE, targetId: roomId,
+          resource: ROOMS_RESOURCE, targetId: roomId, targetLabel: roomId,
           payload: {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
@@ -291,8 +295,8 @@ export function editRoomStateEndpoint(ctx: EndpointContext): Endpoint {
           roomId, '_editStateProperty' as keyof Room, [path, body.value],
         );
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
-          operatorId, action: 'room.state.edit', resource: ROOMS_RESOURCE, targetId: roomId,
+        await recordAudit(ctx, {
+          operatorId, action: 'room.state.edit', resource: ROOMS_RESOURCE, targetId: roomId, targetLabel: roomId,
           payload: {
             path,
             value: body.value,
@@ -329,8 +333,8 @@ export function deleteRoomStateEndpoint(ctx: EndpointContext): Endpoint {
           roomId, '_deleteStateProperty' as keyof Room, [path],
         );
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
-          operatorId, action: 'room.state.delete', resource: ROOMS_RESOURCE, targetId: roomId,
+        await recordAudit(ctx, {
+          operatorId, action: 'room.state.delete', resource: ROOMS_RESOURCE, targetId: roomId, targetLabel: roomId,
           payload: {
             path,
             ip: ipFromHeaders(reqCtx.getHeader),
@@ -359,8 +363,8 @@ export function disposeRoomEndpoint(ctx: EndpointContext): Endpoint {
         // admin response doesn't block on `onLeave` hooks finishing.
         void matchMaker.remoteRoomCall<Room>(roomId, 'disconnect' as keyof Room);
         const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-        await tryRecord(ctx, {
-          operatorId, action: 'room.dispose', resource: ROOMS_RESOURCE, targetId: roomId,
+        await recordAudit(ctx, {
+          operatorId, action: 'room.dispose', resource: ROOMS_RESOURCE, targetId: roomId, targetLabel: roomId,
           payload: {
             ip: ipFromHeaders(reqCtx.getHeader),
             userAgent: reqCtx.getHeader('user-agent') ?? null,
@@ -373,19 +377,4 @@ export function disposeRoomEndpoint(ctx: EndpointContext): Endpoint {
       }
     },
   );
-}
-
-/**
- * Local helper — same try/catch wrapper the CRUD audit calls use.
- * Inlined instead of imported so this file stays self-contained.
- */
-async function tryRecord(
-  ctx: EndpointContext,
-  entry: Parameters<EndpointContext['database']['audit']['record']>[0],
-): Promise<void> {
-  try {
-    await ctx.database.audit.record(entry);
-  } catch (err) {
-    ctx.logger?.warn?.({ err }, '[admin] audit insert failed');
-  }
 }

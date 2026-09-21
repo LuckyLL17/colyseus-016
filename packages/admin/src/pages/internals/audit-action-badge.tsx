@@ -22,11 +22,13 @@ const DESTRUCTIVE = new Set([
   'room.dispose',
   'room.kick',
   'room.state.delete',
+  'audit.export_failed',
 ]);
 const SUCCESS = new Set([
   'user.unban',
+  'audit.export_completed',
 ]);
-const SECONDARY_PREFIXES = ['auth.'];
+const SECONDARY_PREFIXES = ['auth.', 'audit.'];
 const SECONDARY = new Set([
   'user.revoke_sessions',
   'update',

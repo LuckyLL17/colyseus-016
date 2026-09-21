@@ -51,6 +51,10 @@ import {
 import {
   healthEndpoint, uiIndexEndpoint, uiAssetsEndpoint,
 } from './system/endpoint.js';
+import {
+  auditEntriesEndpoint, auditExportEndpoint, auditExportsEndpoint,
+} from './audit/endpoint.js';
+import type { RedactRule } from './audit/redact.js';
 
 export { defineAdminResource } from './catalog/define-resource.js';
 export type { ResourceDefinition, ResourceAction, PolicyEntry } from './catalog/define-resource.js';
@@ -70,6 +74,12 @@ export type {
   HealthPresetOptions, SegmentsPresetOptions,
 } from './dashboard/widgets.js';
 export { ADMIN_ICON_NAMES, type AdminIconName } from './display/icons.js';
+/**
+ * Payload-redaction rule for `AdminOptions.audit.redactRules`. A
+ * `deep` rule masks the named field at any payload depth for viewers
+ * below `minRole`.
+ */
+export type { RedactRule, MinimumRole } from './audit/redact.js';
 
 export interface AdminOptions {
   /** Defaults to `GameDatabase.current`. Pass explicitly for multi-database setups. */
@@ -218,6 +228,36 @@ export interface AdminOptions {
     /** User-defined widgets appended after the presets. */
     widgets?: DashboardWidget[];
   };
+
+  /**
+   * Audit-log query + export configuration. The audit API
+   * (`GET /admin-api/audit/entries`, `/audit/export`, `/audit/exports`)
+   * and the Admin → Audit page are always on; this only tunes safety
+   * limits and field masking.
+   */
+  audit?: {
+    /**
+     * Additional payload-redaction rules keyed by canonical resource
+     * name. These APPEND to the built-in rules (credentials are always
+     * admin-only; user PII is hidden from plain users) — use them to
+     * protect extra sensitive columns a game table carries:
+     *
+     *   audit: {
+     *     redactRules: {
+     *       orders: [{ field: 'cardLast4', minRole: 'admin' }],
+     *     },
+     *   }
+     *
+     * Rules with `deep: true` match the field name at any payload depth.
+     */
+    redactRules?: Record<string, RedactRule[]>;
+    /**
+     * Maximum rows a single streaming export may emit. Defaults to
+     * 100_000; the file's result trailer reports `truncated: true` when
+     * the cap is reached.
+     */
+    exportMaxRows?: number;
+  };
 }
 
 /**
@@ -301,6 +341,10 @@ function applyBuiltInResourceDefaults(
     adminAudit: () => ({
       label: 'Audit log',
       icon: 'file-text',
+      // Dedicated /audit page (cursor filters + streaming export).
+      // Kept out of the generic sidebar; CRUD routes + RBAC stay live
+      // (the user-show Audit tab and FK deep-links rely on them).
+      hidden: true,
       policies: {
         list:   ['admin'],
         read:   ['admin'],
@@ -309,17 +353,15 @@ function applyBuiltInResourceDefaults(
         delete: 'deny',
       },
       list: {
-        // `payload` is here even though it's not in the generic
-        // list-table's column header order — the projection limits
-        // the API response to these columns, and the user-show
-        // Audit tab needs `payload` to render reason / until / diff.
-        // The standalone /adminAudit list page renders it as a
-        // truncated JSON cell via `formatCell`.
-        columns: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload'],
+        // `payload` is included even though it's not in the generic
+        // list-table's header order — the projection limits the API
+        // response to these columns, and the user-show Audit tab needs
+        // it to render reason / until / diff.
+        columns: ['created_at', 'operator_id', 'operator_label', 'action', 'resource', 'target_id', 'target_label', 'payload'],
         defaultSort: { field: 'created_at', order: 'desc' },
       },
       show: {
-        fields: ['created_at', 'operator_id', 'action', 'resource', 'target_id', 'payload'],
+        fields: ['created_at', 'operator_id', 'operator_label', 'action', 'resource', 'target_id', 'target_label', 'payload'],
       },
       columns: {
         created_at:  { label: 'When' },
@@ -427,6 +469,8 @@ function buildContext(opts: AdminOptions): EndpointContext {
     apiPath, uiPath, uiDistDir,
     database, tables, resources,
     getTableConfig, resolveUserId, enforceRbac, logger,
+    auditRedactRules: opts.audit?.redactRules,
+    auditExportMaxRows: opts.audit?.exportMaxRows,
   };
 }
 
@@ -523,6 +567,14 @@ function adminImpl(opts: AdminOptions) {
     adminUserBan:            banUserEndpoint(ctx),
     adminUserUnban:          unbanUserEndpoint(ctx),
     adminUserRevokeSessions: revokeSessionsEndpoint(ctx),
+
+    // Audit-log query API: cursor-paginated filtered list, streaming
+    // NDJSON export, and recent export-status records. Static segments
+    // (/audit/entries) are registered ahead of the generic
+    // `/:resource` routes — rou3 prefers static over parameterized.
+    adminAuditEntries: auditEntriesEndpoint(ctx),
+    adminAuditExport:  auditExportEndpoint(ctx),
+    adminAuditExports: auditExportsEndpoint(ctx),
 
     adminList:        listEndpoint(ctx),
     adminGet:         getEndpoint(ctx),

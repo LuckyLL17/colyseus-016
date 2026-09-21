@@ -90,6 +90,14 @@ export interface CatalogResource {
   label: string;
   /** Lucide icon id; always present (server resolves a default per table name). */
   icon: string;
+  /**
+   * True when the resource exists for API/RBAC purposes but must not
+   * appear in the generic sidebar/list routing. The audit log sets this
+   * because it has a dedicated page (`/audit`) with its own filters,
+   * cursor pagination and export — the generic offset-paginated table
+   * would be the wrong surface.
+   */
+  hidden?: boolean;
   columns: CatalogColumn[];
   /**
    * PK column names. One entry for single-PK tables; multiple for composite-PK

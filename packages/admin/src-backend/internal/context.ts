@@ -16,6 +16,7 @@ import type { Logger } from './logger.js';
 import { errorResponse } from './http.js';
 import { buildPkWhere, type TableConfig } from './helpers.js';
 import { clearSessionCookie, readSessionFromHeader } from '../auth/sessions.js';
+import type { RedactRule } from '../audit/redact.js';
 
 export interface EndpointContext {
   apiPath: string;
@@ -34,6 +35,14 @@ export interface EndpointContext {
   enforceRbac: boolean;
   /** Pino-compatible logger (or null when silenced). */
   logger: Logger | null;
+  /**
+   * Extra payload-redaction rules for audit views/exports, keyed by
+   * canonical resource name. APPEND to the built-in credential/PII
+   * rules — games can add protection but never remove the defaults.
+   */
+  auditRedactRules?: Record<string, RedactRule[]>;
+  /** Hard row cap for one audit export (default 100_000). */
+  auditExportMaxRows?: number;
 }
 
 /**

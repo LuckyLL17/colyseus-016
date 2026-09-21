@@ -126,6 +126,10 @@ export function authEndpoints(opts: AuthEndpointsOptions): Record<string, Endpoi
    * (the user still needs to sign in even if logging is broken). Adds
    * the request IP + user-agent automatically so the payload survives
    * a forensic review without the endpoint needing to remember them.
+   *
+   * The operator's email is snapshotted onto the row at write time
+   * (operatorLabel) so a later account purge doesn't erase "who signed
+   * in" from the log.
    */
   async function tryAuditAuth(
     action:
@@ -145,11 +149,37 @@ export function authEndpoints(opts: AuthEndpointsOptions): Record<string, Endpoi
         userAgent: ctx.getHeader('user-agent') ?? null,
         ...extra,
       };
+      let operatorLabel: string | null = null;
+      if (userId) {
+        try {
+          // Prefer the live users row; custom schemas may omit
+          // displayName, so select whatever columns actually exist.
+          const projection: Record<string, any> = {};
+          const usersTable = database.tables.users as any;
+          if (usersTable?.email) { projection.email = usersTable.email; }
+          if (usersTable?.displayName) { projection.displayName = usersTable.displayName; }
+          const rows = Object.keys(projection).length > 0
+            ? await database.drizzle
+              .select(projection)
+              .from(database.tables.users)
+              .where(eq(usersTable.id, userId))
+              .limit(1)
+            : [];
+          const row = rows[0];
+          operatorLabel = row?.email ?? row?.displayName
+            ?? (typeof extra.email === 'string' ? extra.email : null);
+        } catch {
+          operatorLabel = typeof extra.email === 'string' ? extra.email : null;
+        }
+      }
       await database.audit.record({
         operatorId: userId,
+        operatorLabel,
         action,
         resource: 'auth',
+        resourceLabel: 'Authentication',
         targetId: userId,
+        targetLabel: operatorLabel,
         payload,
       });
     } catch {

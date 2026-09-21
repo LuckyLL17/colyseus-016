@@ -107,6 +107,7 @@ export function buildResourceCatalog(input: BuildCatalogInput): CatalogResource[
       name,
       label: def?.label ?? humanize(name),
       icon: def?.icon ?? iconForTableName(cfg.name),
+      ...(def?.hidden ? { hidden: true } : {}),
       columns: cfg.columns.map((c) => {
         // FK-derived linkTo (from `database.relations`) is the default,
         // but a user-supplied `columns.<name>.linkTo` override wins —

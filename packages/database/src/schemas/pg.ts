@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, jsonb, serial, timestamp, varchar, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, jsonb, serial, timestamp, varchar, primaryKey, index } from 'drizzle-orm/pg-core';
 import { generateId } from '@colyseus/core';
 import type { TableEntry } from './registry.ts';
 
@@ -90,13 +90,20 @@ export const roleColumns = {
  * the timestamp comes from the same clock the test cutoff uses; PG's
  * server-side now() and the JS Date sometimes drift enough to flake
  * `prune(before)` cutoffs by a millisecond.
+ *
+ * `operatorLabel` / `resourceLabel` / `targetLabel` are write-time
+ * display snapshots (see sqlite.ts) so deleted operators/resources/
+ * targets still render with human-readable context.
  */
 export const adminAuditColumns = {
   id: text('id').primaryKey().$defaultFn(() => generateId(21)),
   operatorId: text('operator_id'),
+  operatorLabel: text('operator_label'),
   action: text('action').notNull(),
   resource: text('resource').notNull(),
+  resourceLabel: text('resource_label'),
   targetId: text('target_id'),
+  targetLabel: text('target_label'),
   payload: jsonb('payload'),
   createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
 };
@@ -141,7 +148,16 @@ export const colyseusRoles = pgTable('colyseus_roles', { ...roleColumns });
 
 export const colyseusUserNotes = pgTable('colyseus_user_notes', { ...userNoteColumns });
 
-export const colyseusAdminAudit = pgTable('colyseus_admin_audit', { ...adminAuditColumns });
+export const colyseusAdminAudit = pgTable('colyseus_admin_audit', { ...adminAuditColumns }, (table) => [
+  // Newest-first scans with optional operator/resource/target/action
+  // equality — see schemas/sqlite.ts. CREATE INDEX IF NOT EXISTS runs
+  // on every boot, so existing databases pick these up automatically.
+  index('idx_admin_audit_created_at').on(table.createdAt),
+  index('idx_admin_audit_operator_created').on(table.operatorId, table.createdAt),
+  index('idx_admin_audit_resource_created').on(table.resource, table.createdAt),
+  index('idx_admin_audit_target_created').on(table.targetId, table.createdAt),
+  index('idx_admin_audit_action_created').on(table.action, table.createdAt),
+]);
 
 /**
  * Matchmaking room cache. Used by the `@colyseus/database/driver`

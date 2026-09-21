@@ -8,6 +8,7 @@ import axios from 'axios';
 import { Toaster } from 'sonner';
 import type { Resource } from './types';
 import { ListPage, ShowPage, EditPage, CreatePage } from './pages';
+import { AuditLogPage } from './pages/audit/AuditLogPage';
 import { RoomsListPage } from './pages/rooms/list';
 import { RoomShowPage } from './pages/rooms/show';
 import { Dashboard } from './Dashboard';
@@ -102,6 +103,12 @@ export function App() {
                 directly. */}
             <Route path="rooms" element={<RoomsListPage />} />
             <Route path="rooms/:roomId" element={<RoomShowPage />} />
+            {/* Dedicated audit surface (cursor filters + streaming
+                export). Declared before the generic `:resource` route
+                so the static path wins; adminAudit is also flagged
+                `hidden` in the catalog so it doesn't get a generic
+                sidebar entry. */}
+            <Route path="audit" element={<AuditLogPage />} />
             {/* `<KeyedRoute>` forces a fresh ListPage instance per
                 `:resource` so React Query's "keep previous data"
                 behavior (which is the right call inside a single
@@ -274,10 +281,17 @@ function SidebarNav({ resources, pathname }: { resources: Resource[]; pathname: 
       >
         Live rooms
       </SidebarLink>
+      <SidebarLink
+        to="/audit"
+        icon={iconFor('file-text')}
+        active={pathname === '/audit'}
+      >
+        Audit log
+      </SidebarLink>
       <div className="px-3 pt-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
         Resources
       </div>
-      {resources.map((r) => (
+      {resources.filter((r) => !r.hidden).map((r) => (
         <SidebarLink
           key={r.name}
           to={`/${r.name}`}

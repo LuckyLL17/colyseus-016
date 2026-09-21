@@ -94,6 +94,13 @@ export interface ResourceDefinition {
   __tableName: string;
   /** human label for sidebar/page titles */
   label?: string;
+  /**
+   * Keep the resource registered (routes, RBAC, FK resolution) but hide
+   * it from the generic sidebar resource list. Use for tables that have
+   * a dedicated UI surface — the audit log (`/audit`) is the built-in
+   * example.
+   */
+  hidden?: boolean;
   /** Icon name from the admin's icon set (e.g. "team", "trophy") for the sidebar. See `AdminIconName`. */
   icon?: AdminIconName;
   list?: {

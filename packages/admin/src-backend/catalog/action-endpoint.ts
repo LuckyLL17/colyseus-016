@@ -5,9 +5,10 @@
  * + pass it to the handler. Each invocation is audit-logged.
  */
 import { createEndpoint, type Endpoint } from '@colyseus/core';
-import { sqlKeyedProjection, tryAudit } from '../internal/helpers.js';
+import { sqlKeyedProjection } from '../internal/helpers.js';
 import { errorResponse, json } from '../internal/http.js';
 import { pkOrError, tableOrError, type EndpointContext } from '../internal/context.js';
+import { recordAudit } from '../audit/record.js';
 
 export function actionEndpoint(ctx: EndpointContext): Endpoint {
   return createEndpoint(
@@ -48,13 +49,14 @@ export function actionEndpoint(ctx: EndpointContext): Endpoint {
       }
 
       const result = await found.handler(row, { userId: userId ?? '', resource });
-      await tryAudit(ctx.logger, () => ctx.database.audit.record({
+      await recordAudit(ctx, {
         operatorId: userId ?? null,
         action: 'custom',
         resource,
         targetId: body.id ?? null,
+        targetRowHints: row ? [row] : [],
         payload: { name: actionName, args: body, result: result ?? null },
-      }));
+      });
       return json({ ok: true, result: result ?? null });
     },
   );

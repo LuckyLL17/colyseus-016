@@ -86,9 +86,12 @@ export type UserNotesTableShape = Table & {
 export type AdminAuditTableShape = Table & {
   id: AnyColumn;
   operatorId: AnyColumn;
+  operatorLabel: AnyColumn;
   action: AnyColumn;
   resource: AnyColumn;
+  resourceLabel: AnyColumn;
   targetId: AnyColumn;
+  targetLabel: AnyColumn;
   payload: AnyColumn;
   createdAt: AnyColumn;
 };

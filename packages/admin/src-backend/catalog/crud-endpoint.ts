@@ -22,8 +22,8 @@ import {
   pkColumns,
   sqlKeyedProjection,
   translateBodyKeys,
-  tryAudit,
 } from '../internal/helpers.js';
+import { recordAudit, recordAuditUpdate } from '../audit/record.js';
 import { errorResponse, json } from '../internal/http.js';
 import { guard, pkOrError, tableOrError, type EndpointContext } from '../internal/context.js';
 
@@ -195,14 +195,18 @@ export function createEndpoint_(ctx: EndpointContext): Endpoint {
       .returning(sqlKeyedProjection(r.cfg));
 
     // Audit: capture the created row + the operator behind the creation.
+    // The row snapshot doubles as the target-label source, so the
+    // record stays legible even if the row is later deleted.
     const targetId = (() => {
       const pkCols = pkColumns(r.cfg);
       if (pkCols.length === 1) { return String(row[pkCols[0]!.name]); }
       return null;
     })();
-    await tryAudit(ctx.logger, () => ctx.database.audit.record({
-      operatorId, action: 'create', resource, targetId, payload: { row },
-    }));
+    await recordAudit(ctx, {
+      operatorId, action: 'create', resource, targetId,
+      targetRowHints: [row],
+      payload: { row },
+    });
     return json(row, { status: 201 });
   });
 }
@@ -235,10 +239,11 @@ export function updateEndpoint(ctx: EndpointContext, method: 'PUT' | 'PATCH'): E
       .where(built.where).returning(sqlKeyedProjection(cfg));
     if (!row) { return errorResponse(404, 'not found'); }
     const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-    await tryAudit(ctx.logger, () => ctx.database.audit.recordUpdate({
+    await recordAuditUpdate(ctx, {
       operatorId, resource, targetId: id,
+      targetRowHints: [row, beforeRows[0]],
       before: beforeRows[0] as any, after: row,
-    }));
+    });
     return json(row);
   });
 }
@@ -261,9 +266,13 @@ export function deleteEndpoint(ctx: EndpointContext): Endpoint {
       .returning(sqlKeyedProjection(cfg));
     if (!row) { return errorResponse(404, 'not found'); }
     const operatorId = await ctx.resolveUserId({ getHeader: reqCtx.getHeader });
-    await tryAudit(ctx.logger, () => ctx.database.audit.record({
-      operatorId, action: 'delete', resource, targetId: id, payload: { row },
-    }));
+    // The deleted row snapshot is the ONLY chance to capture its
+    // label — captureTargetLabel gets it from this hint, never a join.
+    await recordAudit(ctx, {
+      operatorId, action: 'delete', resource, targetId: id,
+      targetRowHints: [row],
+      payload: { row },
+    });
     return json(row);
   });
 }
